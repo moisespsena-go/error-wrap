@@ -1,25 +1,29 @@
 package errwrap
 
 import (
-	"io"
 	"errors"
-	"strings"
 	"fmt"
+	"io"
+	"reflect"
+	"strings"
 )
 
-type ErrorWrapperInterface interface {
+type ErrorWrapper interface {
 	error
 	Err() error
 	First() error
-	Prev() ErrorWrapperInterface
+	Prev() ErrorWrapper
 	List() []error
 	Each(func(err error) error) error
+	EachType(cb func(typ reflect.Type, err error) error) (err error)
 	Is(err error) bool
 }
 
+type ErrorWrapperInterface = ErrorWrapper
+
 type Wrapper struct {
 	err  error
-	prev ErrorWrapperInterface
+	prev ErrorWrapper
 }
 
 func (w Wrapper) Error() string {
@@ -43,12 +47,12 @@ func (w Wrapper) First() (err error) {
 	return
 }
 
-func (w Wrapper) Prev() ErrorWrapperInterface {
+func (w Wrapper) Prev() ErrorWrapper {
 	return w.prev
 }
 
 func (w Wrapper) List() (errors []error) {
-	var wr ErrorWrapperInterface = w
+	var wr ErrorWrapper = w
 	for wr != nil {
 		errors = append(errors, wr.Err())
 		wr = wr.Prev()
@@ -57,9 +61,21 @@ func (w Wrapper) List() (errors []error) {
 }
 
 func (w Wrapper) Each(cb func(err error) error) (err error) {
-	var wr ErrorWrapperInterface = w
+	var wr ErrorWrapper = w
 	for wr != nil {
 		err = cb(wr.Err())
+		if err != nil {
+			return err
+		}
+		wr = wr.Prev()
+	}
+	return
+}
+
+func (w Wrapper) EachType(cb func(typ reflect.Type, err error) error) (err error) {
+	var wr ErrorWrapper = w
+	for wr != nil {
+		err = cb(TypeOf(wr.Err()), wr.Err())
 		if err != nil {
 			return err
 		}
@@ -79,7 +95,7 @@ func (w Wrapper) Is(err error) (is bool) {
 	return
 }
 
-func Wrap(child error, self interface{}, args ...interface{}) ErrorWrapperInterface {
+func Wrap(child error, self interface{}, args ...interface{}) ErrorWrapper {
 	if child == nil {
 		return nil
 	}
@@ -93,10 +109,18 @@ func Wrap(child error, self interface{}, args ...interface{}) ErrorWrapperInterf
 	if !Wrapped(child) {
 		child = &Wrapper{err: child}
 	}
-	return &Wrapper{self.(error), child.(ErrorWrapperInterface)}
+	return &Wrapper{self.(error), child.(ErrorWrapper)}
 }
 
 func Wrapped(err error) bool {
-	_, ok := err.(ErrorWrapperInterface)
+	_, ok := err.(ErrorWrapper)
 	return ok
+}
+
+func TypeOf(e error) (typ reflect.Type) {
+	typ = reflect.TypeOf(e)
+	for typ.Kind() == reflect.Ptr || typ.Kind() == reflect.Interface {
+		typ = typ.Elem()
+	}
+	return
 }
